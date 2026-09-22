@@ -1,0 +1,38 @@
+name: Bundler audit findings
+description: >-
+  Audit the whole bundle and emit one JSONL finding per gem advisory. Uses
+  ruby-advisory-db, which maps advisories to gems that GitHub's database leaves
+  unreviewed and Dependabot therefore cannot match. Pairs with
+  security-findings-issues.
+
+inputs:
+  bundler-audit-command:
+    description: How to invoke bundler-audit.
+    required: false
+    default: bundle exec bundler-audit
+  output:
+    description: JSONL file to append findings to.
+    required: false
+    default: ""
+
+outputs:
+  count:
+    description: Number of findings written.
+    value: ${{ steps.audit.outputs.count }}
+  completed:
+    description: >-
+      false when bundler-audit could not produce a usable report. A scan that
+      did not run reports nothing, which is indistinguishable from a clean
+      result, so callers pass this to security-findings-issues' close-resolved.
+    value: ${{ steps.audit.outputs.completed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Audit
+      id: audit
+      shell: bash
+      env:
+        BUNDLER_AUDIT_COMMAND: ${{ inputs.bundler-audit-command }}
+        FINDINGS_OUTPUT: ${{ inputs.output }}
+      run: ${{ github.action_path }}/emit-findings.sh
