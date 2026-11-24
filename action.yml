@@ -1,6 +1,7 @@
 name: Bundler audit findings
 description: >-
-  Audit the whole bundle and emit one JSONL finding per gem advisory. Uses
+  Audit the whole bundle and emit one JSONL finding per vulnerable gem,
+  covering all of its advisories. Uses
   ruby-advisory-db, which maps advisories to gems that GitHub's database leaves
   unreviewed and Dependabot therefore cannot match. Pairs with
   security-findings-issues.

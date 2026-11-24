@@ -1,6 +1,6 @@
 # bundler-audit-findings
 
-Audit the whole bundle and emit one JSONL finding per gem advisory, for
+Audit the whole bundle and emit one JSONL finding per vulnerable gem, for
 [`security-findings-issues`](https://github.com/ten-thousand-hammers/security-findings-issues)
 to track as issues.
 
@@ -65,12 +65,17 @@ this catches what it cannot.
 
 | finding | key |
 | --- | --- |
-| gem advisory | `gem/<name>/<advisory id>` |
+| vulnerable gem | `gem/<name>` |
 | insecure Gemfile source | `gem-source/<source>` |
 | a scan that could not run | `scan/bundler-audit` |
 
-One advisory is one issue. Two advisories against the same gem are two issues,
-because they can carry different patched versions and be resolved separately.
+One gem is one issue, however many advisories it has. Fixing them is one
+upgrade, so nine advisories against `net-ssh` are one issue, not nine. The body
+lists every advisory with its severity and patched versions, sorted worst
+first, and the title carries the advisory count and highest severity.
+
+When an advisory is added or fixed, the body changes and the existing issue is
+refreshed. The issue closes once the gem has no advisories left.
 
 `insecure_source` results carry a `source` and no `gem` or `advisory`. Counting
 every result as a gem advisory inflates the total and renders a row of nulls,
