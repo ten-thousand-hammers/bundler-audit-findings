@@ -55,6 +55,23 @@ jq -c '
   def aid: .advisory.id // .advisory.cve // .advisory.ghsa // "unknown";
   def fixed: (.advisory.patched_versions // [])
     | if length == 0 then "no patched release yet" else join(", ") end;
+  # ruby-advisory-db hard-wraps descriptions at ~70 columns, and GitHub issues
+  # render every newline as a break. Rejoin wrapped lines into paragraphs,
+  # leaving blank lines, list items, headings, quotes, tables, indented code
+  # and fenced blocks alone.
+  def unwrap:
+    reduce split("\n")[] as $l ({out: [], open: false, fence: false};
+      if ($l | test("^\\s*(```|~~~)")) then
+        .out += [$l] | .fence = (.fence | not) | .open = false
+      elif .fence then .out += [$l]
+      elif ($l | test("^\\s*$")) then .out += [""] | .open = false
+      elif .open and ($l | test("^(\\s*([-*+]|[0-9]+[.)])\\s|\\s*[#>|]| {4}|\\t)") | not) then
+        .out[(.out | length) - 1] += " " + ($l | sub("^\\s+"; ""))
+        | .open = ($l | test("  $") | not)
+      else
+        .out += [$l] | .open = ($l | test("^\\s*[#|]|  $") | not)
+      end)
+    | .out | join("\n");
   [ .results[]? | select(.type == "unpatched_gem") ]
   | group_by(.gem.name)[]
   | sort_by([-(sev | rank), aid]) as $advs
@@ -77,7 +94,7 @@ jq -c '
         ([ $advs[] | "| " + (if .advisory.url then "[" + aid + "](" + .advisory.url + ")" else aid end) + " | " + sev + " | " + fixed + " |" ]
           | join("\n")) + "\n\n" +
         ([ $advs[] | "### " + aid + ": " + (.advisory.title // "Advisory") + "\n\n"
-                   + (.advisory.description // "") ] | join("\n\n"))
+                   + (.advisory.description // "" | unwrap) ] | join("\n\n"))
       )
     }' "$report" >> "$out"
 

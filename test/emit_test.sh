@@ -105,6 +105,21 @@ setup; stub '{"results":[{"type":"unpatched_gem","gem":{"name":"rack","version":
 run
 check "same key with one advisory" "gem/rack" "$(jq -r .key "$FINDINGS_OUTPUT")"
 
+echo "== hard-wrapped descriptions are rejoined into paragraphs =="
+setup
+DESC='Net::SSH::Service::Forward#initialize registers channel handlers for\nthe server-initiated channel types auth-agent and\nat the moment the forwarding service is instantiated.\n\nRelated paths, for contrast:\n\n- forward_agent: true sets\n  the flag\n- auth-agent-req is sent\n\n```ruby\nNet::SSH.start(host,\n  user)\n```\n\n    indented code\n    stays put\n\n| a | b |\n| - | - |\n\n## Heading\nAfter heading.'
+jq -n --arg d "$(printf '%b' "$DESC")" '{results:[{type:"unpatched_gem",gem:{name:"net-ssh",version:"7.3.2"},advisory:{id:"GHSA-x",criticality:"high",description:$d}}]}' > "$WORK/report.json"
+stub "$(cat "$WORK/report.json")" 1
+run
+BODY="$(jq -r .body "$FINDINGS_OUTPUT")"
+check "paragraph is one line" "yes" "$(contains 'registers channel handlers for the server-initiated channel types auth-agent and at the moment the forwarding service is instantiated.' "$BODY")"
+check "paragraphs stay separate" "yes" "$(contains $'instantiated.\n\nRelated paths, for contrast:' "$BODY")"
+check "list items stay separate" "yes" "$(contains $'- forward_agent: true sets the flag\n- auth-agent-req is sent' "$BODY")"
+check "fenced code untouched" "yes" "$(contains $'Net::SSH.start(host,\n  user)' "$BODY")"
+check "indented code untouched" "yes" "$(contains $'    indented code\n    stays put' "$BODY")"
+check "table rows untouched" "yes" "$(contains $'| a | b |\n| - | - |' "$BODY")"
+check "heading not merged" "yes" "$(contains $'## Heading\nAfter heading.' "$BODY")"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
