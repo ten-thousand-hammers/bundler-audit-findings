@@ -56,21 +56,30 @@ jq -c '
   def fixed: (.advisory.patched_versions // [])
     | if length == 0 then "no patched release yet" else join(", ") end;
   # ruby-advisory-db hard-wraps descriptions at ~70 columns, and GitHub issues
-  # render every newline as a break. Rejoin wrapped lines into paragraphs,
-  # leaving blank lines, list items, headings, quotes, tables, indented code
-  # and fenced blocks alone.
+  # render every newline as a break. Rejoin wrapped lines into paragraphs.
+  # A line that is blank, a list item, heading or heading underline, quote,
+  # table row, indented code or link definition is a block of its own: it is
+  # never joined onto, and only a list item takes the lines after it. A fenced
+  # block is left alone until a fence of the same character and at least the
+  # same length closes it.
+  def block: test("^(\\s*([-*+]|[0-9]+[.)])\\s|\\s*[#>|]| {4}|\\t| {0,3}\\[[^\\]]+\\]:| {0,3}(=+|-+|\\*+|_+)\\s*$)");
   def unwrap:
-    reduce split("\n")[] as $l ({out: [], open: false, fence: false};
-      if ($l | test("^\\s*(```|~~~)")) then
-        .out += [$l] | .fence = (.fence | not) | .open = false
-      elif .fence then .out += [$l]
-      elif ($l | test("^\\s*$")) then .out += [""] | .open = false
-      elif .open and ($l | test("^(\\s*([-*+]|[0-9]+[.)])\\s|\\s*[#>|]| {4}|\\t)") | not) then
-        .out[(.out | length) - 1] += " " + ($l | sub("^\\s+"; ""))
-        | .open = ($l | test("  $") | not)
-      else
-        .out += [$l] | .open = ($l | test("^\\s*[#|]|  $") | not)
-      end)
+    reduce split("\n")[] as $l ({out: [], open: false, fence: null};
+      (($l | capture("^ {0,3}(?<f>`{3,}|~{3,})") | .f) // null) as $f
+      | if .fence != null then
+          .out += [$l]
+          | if $f != null and ($f[0:1] == .fence[0:1]) and ($f | length) >= (.fence | length)
+              and ($l | test("^ {0,3}[`~]+\\s*$")) then .fence = null else . end
+        elif $f != null then .out += [$l] | .fence = $f | .open = false
+        elif ($l | test("^\\s*$")) then .out += [""] | .open = false
+        elif ($l | block) then
+          # A list item keeps its wrapped continuation lines.
+          .out += [$l] | .open = ($l | test("^\\s*([-*+]|[0-9]+[.)])\\s") and (test("  $") | not))
+        elif .open then
+          .out[(.out | length) - 1] += " " + ($l | sub("^\\s+"; ""))
+          | .open = ($l | test("  $") | not)
+        else .out += [$l] | .open = ($l | test("  $") | not)
+        end)
     | .out | join("\n");
   [ .results[]? | select(.type == "unpatched_gem") ]
   | group_by(.gem.name)[]

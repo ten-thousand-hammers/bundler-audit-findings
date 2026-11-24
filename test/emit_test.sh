@@ -120,6 +120,19 @@ check "indented code untouched" "yes" "$(contains $'    indented code\n    stays
 check "table rows untouched" "yes" "$(contains $'| a | b |\n| - | - |' "$BODY")"
 check "heading not merged" "yes" "$(contains $'## Heading\nAfter heading.' "$BODY")"
 
+echo "== markdown structure the reflow must not merge =="
+setup
+DESC='See the [upgrade notes][notes] and the [fix][fix].\n[notes]: https://example.com/notes\n[fix]: https://example.com/fix\n\n    code line\nProse after code.\n\nWorkarounds\n-----------\nUpgrade the gem.\n\n````\n```\nstill\nfenced\n````\nAfter the fence\nwraps here.'
+jq -n --arg d "$(printf '%b' "$DESC")" '{results:[{type:"unpatched_gem",gem:{name:"puma",version:"5.0.0"},advisory:{id:"CVE-2021-29509",criticality:"high",description:$d}}]}' > "$WORK/report.json"
+stub "$(cat "$WORK/report.json")" 1
+run
+BODY="$(jq -r .body "$FINDINGS_OUTPUT")"
+check "link definitions stay on their own lines" "yes" "$(contains $'[fix][fix].\n[notes]: https://example.com/notes\n[fix]: https://example.com/fix' "$BODY")"
+check "prose not appended to indented code" "yes" "$(contains $'    code line\nProse after code.' "$BODY")"
+check "setext heading kept" "yes" "$(contains $'Workarounds\n-----------\nUpgrade the gem.' "$BODY")"
+check "shorter fence does not close a longer one" "yes" "$(contains $'```\nstill\nfenced\n````' "$BODY")"
+check "text after the fence still rejoins" "yes" "$(contains 'After the fence wraps here.' "$BODY")"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
