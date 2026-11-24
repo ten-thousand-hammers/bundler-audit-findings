@@ -30,14 +30,15 @@ findings() { grep -c '' "$FINDINGS_OUTPUT" 2>/dev/null; true; }
 
 ADVISORY='{"results":[{"type":"unpatched_gem","gem":{"name":"ruby_llm","version":"1.16.0"},"advisory":{"id":"CVE-2026-67991","url":"https://nvd.nist.gov/vuln/detail/CVE-2026-67991","criticality":"high","title":"Polynomial-Time ReDoS","description":"A crafted name causes excessive CPU.","patched_versions":[">= 2.0.0.rc1"]}}]}'
 
-echo "== one finding per advisory =="
+echo "== one advisory is one finding =="
 setup; stub "$ADVISORY" 1
 run
 check "exit 0" "0" "$RC"
 check "one finding" "1" "$(findings)"
 check "count output" "1" "$(out_val count)"
 check "completed" "true" "$(out_val completed)"
-check "keyed gem/name/advisory" "yes" "$(contains '"key":"gem/ruby_llm/CVE-2026-67991"' "$(cat "$FINDINGS_OUTPUT")")"
+check "keyed gem/name" "yes" "$(contains '"key":"gem/ruby_llm"' "$(cat "$FINDINGS_OUTPUT")")"
+check "advisory id in title" "yes" "$(contains 'CVE-2026-67991 (high)' "$(jq -r .title "$FINDINGS_OUTPUT")")"
 check "version in title" "yes" "$(contains 'ruby_llm 1.16.0' "$(jq -r .title "$FINDINGS_OUTPUT")")"
 check "patched version in body" "yes" "$(contains '>= 2.0.0.rc1' "$(jq -r .body "$FINDINGS_OUTPUT")")"
 
@@ -84,11 +85,25 @@ setup; stub '{"version":"0.9.2"}' 1
 run
 check "completed is false" "false" "$(out_val completed)"
 
-echo "== several advisories against one gem are separate findings =="
-setup; stub '{"results":[{"type":"unpatched_gem","gem":{"name":"rack","version":"2.0.1"},"advisory":{"id":"CVE-1","criticality":"high","patched_versions":[">= 2.0.2"]}},{"type":"unpatched_gem","gem":{"name":"rack","version":"2.0.1"},"advisory":{"id":"CVE-2","criticality":"low","patched_versions":[">= 2.0.3"]}}]}' 1
+echo "== several advisories against one gem are one finding =="
+setup; stub '{"results":[{"type":"unpatched_gem","gem":{"name":"rack","version":"2.0.1"},"advisory":{"id":"CVE-1","criticality":"low","patched_versions":[">= 2.0.2"]}},{"type":"unpatched_gem","gem":{"name":"rack","version":"2.0.1"},"advisory":{"id":"CVE-2","criticality":"high","patched_versions":[">= 2.0.3"]}},{"type":"unpatched_gem","gem":{"name":"rack","version":"2.0.1"},"advisory":{"id":"CVE-3","criticality":null,"patched_versions":[]}},{"type":"unpatched_gem","gem":{"name":"net-ssh","version":"7.3.2"},"advisory":{"id":"GHSA-x","criticality":"medium","patched_versions":[">= 7.3.3"]}}]}' 1
 run
-check "two findings" "2" "$(findings)"
+check "one finding per gem" "2" "$(findings)"
+check "count output" "2" "$(out_val count)"
 check "no duplicate keys" "0" "$(jq -r .key "$FINDINGS_OUTPUT" | sort | uniq -d | grep -c '')"
+RACK="$(jq -c 'select(.key == "gem/rack")' "$FINDINGS_OUTPUT")"
+check "rack keyed by gem" "yes" "$(contains '"key":"gem/rack"' "$RACK")"
+check "title counts advisories, worst severity" "Security: rack 2.0.1 — 3 advisories (high)" "$(jq -r .title <<<"$RACK")"
+BODY="$(jq -r .body <<<"$RACK")"
+check "every advisory in body" "yesyesyes" "$(contains 'CVE-1' "$BODY")$(contains 'CVE-2' "$BODY")$(contains 'CVE-3' "$BODY")"
+check "worst advisory listed first" "CVE-2" "$(grep -o 'CVE-[0-9]' <<<"$BODY" | head -1)"
+check "unpatched advisory says so" "yes" "$(contains 'no patched release yet' "$BODY")"
+check "single-advisory gem names it" "Security: net-ssh 7.3.2 — GHSA-x (medium)" "$(jq -r 'select(.key == "gem/net-ssh") | .title' "$FINDINGS_OUTPUT")"
+
+echo "== an advisory set that changes keeps the same key =="
+setup; stub '{"results":[{"type":"unpatched_gem","gem":{"name":"rack","version":"2.0.1"},"advisory":{"id":"CVE-1","criticality":"low"}}]}' 1
+run
+check "same key with one advisory" "gem/rack" "$(jq -r .key "$FINDINGS_OUTPUT")"
 
 echo
 echo "$pass passed, $fail failed"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Emit one JSONL finding per gem advisory.
+# Emit one JSONL finding per vulnerable gem, covering all of its advisories.
 #
 # This script inspects exit codes itself -- a scanner that fails is a finding,
 # not a reason to abort -- so errexit must stay off, including when a caller
@@ -31,7 +31,8 @@ finish() {
 # bundler-audit exits 1 for advisories and for operational failures alike, and
 # an empty file parses as valid JSON, so neither the exit code nor `jq empty`
 # distinguishes a clean report from no report. Check the report's shape.
-if [ "$code" -gt 1 ] || ! jq -e '.results | type == "array"' "$report" >/dev/null 2>&1; then
+# Compare the output rather than using `jq -e`: jq 1.6 exits 0 on empty input.
+if [ "$code" -gt 1 ] || [ "$(jq '.results | type == "array"' "$report" 2>/dev/null)" != true ]; then
   jq -cn --arg log "$(tail -30 "$raw")" --arg code "$code" '{
     key: "scan/bundler-audit",
     title: "Security scan: bundler-audit could not complete",
@@ -44,23 +45,41 @@ fi
 
 # Only unpatched_gem results describe a gem advisory. bundler-audit also emits
 # insecure_source results, which carry a `source` and no `gem` or `advisory`.
+#
+# Advisories are grouped by gem: however many advisories a gem has, fixing them
+# is one upgrade, so it is one finding. The body changes when an advisory is
+# added or fixed, which refreshes the issue rather than opening another.
 jq -c '
-  .results[]? | select(.type == "unpatched_gem") |
-  (.advisory.id // .advisory.cve // .advisory.ghsa // "unknown") as $id |
-  {
-    key: ("gem/" + .gem.name + "/" + $id),
-    title: ("Security: " + .gem.name + " " + .gem.version + " — " + $id
-            + " (" + (.advisory.criticality // "unknown") + ")"),
-    body: (
-      "**Gem:** `" + .gem.name + "` " + .gem.version + "  \n" +
-      "**Advisory:** [" + $id + "](" + (.advisory.url // "") + ")  \n" +
-      "**Severity:** " + (.advisory.criticality // "unknown") + "  \n" +
-      "**Fixed in:** " + ((.advisory.patched_versions // [])
-        | if length == 0 then "no patched release yet" else join(", ") end) + "\n\n" +
-      "### " + (.advisory.title // "Advisory") + "\n\n" +
-      (.advisory.description // "")
-    )
-  }' "$report" >> "$out"
+  def rank: {"critical":4,"high":3,"medium":2,"moderate":2,"low":1}[. // ""] // 0;
+  def sev: .advisory.criticality // "unknown";
+  def aid: .advisory.id // .advisory.cve // .advisory.ghsa // "unknown";
+  def fixed: (.advisory.patched_versions // [])
+    | if length == 0 then "no patched release yet" else join(", ") end;
+  [ .results[]? | select(.type == "unpatched_gem") ]
+  | group_by(.gem.name)[]
+  | sort_by([-(sev | rank), aid]) as $advs
+  | $advs[0] as $top
+  | ($top.gem.name) as $name
+  | ([$advs[].gem.version] | unique | join(", ")) as $version
+  | ($top | sev) as $worst
+  | {
+      key: ("gem/" + $name),
+      title: ("Security: " + $name + " " + $version + " — "
+              + (if ($advs | length) == 1 then ($top | aid)
+                 else "\($advs | length) advisories" end)
+              + " (" + $worst + ")"),
+      body: (
+        "**Gem:** `" + $name + "` " + $version + "  \n" +
+        "**Highest severity:** " + $worst + "  \n" +
+        "**Advisories:** \($advs | length)\n\n" +
+        "Upgrading `" + $name + "` past every \"Fixed in\" version below closes this issue.\n\n" +
+        "| Advisory | Severity | Fixed in |\n| --- | --- | --- |\n" +
+        ([ $advs[] | "| " + (if .advisory.url then "[" + aid + "](" + .advisory.url + ")" else aid end) + " | " + sev + " | " + fixed + " |" ]
+          | join("\n")) + "\n\n" +
+        ([ $advs[] | "### " + aid + ": " + (.advisory.title // "Advisory") + "\n\n"
+                   + (.advisory.description // "") ] | join("\n\n"))
+      )
+    }' "$report" >> "$out"
 
 jq -c '
   .results[]? | select(.type == "insecure_source") |
