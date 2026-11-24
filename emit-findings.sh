@@ -55,6 +55,41 @@ jq -c '
   def aid: .advisory.id // .advisory.cve // .advisory.ghsa // "unknown";
   def fixed: (.advisory.patched_versions // [])
     | if length == 0 then "no patched release yet" else join(", ") end;
+  # ruby-advisory-db hard-wraps descriptions at ~70 columns, and GitHub issues
+  # render every newline as a break. Rejoin wrapped lines into paragraphs.
+  # A line that is blank, a list item, heading or heading underline, quote,
+  # table row, indented code or link definition is a block of its own: it is
+  # never joined onto, and only a list item takes the lines after it. A fenced
+  # block is left alone until a fence of the same character and at least the
+  # same length closes it.
+  def block: test("^(\\s*([-*+]|[0-9]+[.)])\\s|\\s*[#>|]| {4}|\\t| {0,3}\\[[^\\]]+\\]:| {0,3}(=+|-+|\\*+|_+)\\s*$)");
+  def unwrap:
+    reduce split("\n")[] as $l ({out: [], open: false, fence: null, list: null, blank: false};
+      # Fences may be indented up to three columns past the enclosing list
+      # item content, so a fence nested in a list is still recognised while
+      # fence-like text in top-level indented code is not.
+      ((.list // 0) + 3) as $max
+      | (($l | capture("^(?<i> *)(?<f>`{3,}|~{3,})") | select((.i | length) <= $max) | .f) // null) as $f
+      | if .fence != null then
+          .out += [$l]
+          | if $f != null and ($f[0:1] == .fence[0:1]) and ($f | length) >= (.fence | length)
+              and ($l | test("^ *(`+|~+)\\s*$")) then .fence = null else . end
+        elif $f != null then .out += [$l] | .fence = $f | .open = false | .blank = false
+        elif ($l | test("^\\s*$")) then .out += [""] | .open = false | .blank = true
+        else
+          (if ($l | test("^ ?\\S")) and .blank then .list = null else . end)
+          | .blank = false
+          | (($l | capture("^(?<m>\\s*([-*+]|[0-9]+[.)])\\s+)") | .m | length) // null) as $item
+          | if $item != null then
+              .out += [$l] | .list = $item | .open = ($l | test("  $") | not)
+            elif ($l | block) then .out += [$l] | .open = false
+            elif .open then
+              .out[(.out | length) - 1] += " " + ($l | sub("^\\s+"; ""))
+              | .open = ($l | test("  $") | not)
+            else .out += [$l] | .open = ($l | test("  $") | not)
+            end
+        end)
+    | .out | join("\n");
   [ .results[]? | select(.type == "unpatched_gem") ]
   | group_by(.gem.name)[]
   | sort_by([-(sev | rank), aid]) as $advs
@@ -77,7 +112,7 @@ jq -c '
         ([ $advs[] | "| " + (if .advisory.url then "[" + aid + "](" + .advisory.url + ")" else aid end) + " | " + sev + " | " + fixed + " |" ]
           | join("\n")) + "\n\n" +
         ([ $advs[] | "### " + aid + ": " + (.advisory.title // "Advisory") + "\n\n"
-                   + (.advisory.description // "") ] | join("\n\n"))
+                   + (.advisory.description // "" | unwrap) ] | join("\n\n"))
       )
     }' "$report" >> "$out"
 
