@@ -64,21 +64,30 @@ jq -c '
   # same length closes it.
   def block: test("^(\\s*([-*+]|[0-9]+[.)])\\s|\\s*[#>|]| {4}|\\t| {0,3}\\[[^\\]]+\\]:| {0,3}(=+|-+|\\*+|_+)\\s*$)");
   def unwrap:
-    reduce split("\n")[] as $l ({out: [], open: false, fence: null};
-      (($l | capture("^ {0,3}(?<f>`{3,}|~{3,})") | .f) // null) as $f
+    reduce split("\n")[] as $l ({out: [], open: false, fence: null, list: null, blank: false};
+      # Fences may be indented up to three columns past the enclosing list
+      # item content, so a fence nested in a list is still recognised while
+      # fence-like text in top-level indented code is not.
+      ((.list // 0) + 3) as $max
+      | (($l | capture("^(?<i> *)(?<f>`{3,}|~{3,})") | select((.i | length) <= $max) | .f) // null) as $f
       | if .fence != null then
           .out += [$l]
           | if $f != null and ($f[0:1] == .fence[0:1]) and ($f | length) >= (.fence | length)
-              and ($l | test("^ {0,3}[`~]+\\s*$")) then .fence = null else . end
-        elif $f != null then .out += [$l] | .fence = $f | .open = false
-        elif ($l | test("^\\s*$")) then .out += [""] | .open = false
-        elif ($l | block) then
-          # A list item keeps its wrapped continuation lines.
-          .out += [$l] | .open = ($l | test("^\\s*([-*+]|[0-9]+[.)])\\s") and (test("  $") | not))
-        elif .open then
-          .out[(.out | length) - 1] += " " + ($l | sub("^\\s+"; ""))
-          | .open = ($l | test("  $") | not)
-        else .out += [$l] | .open = ($l | test("  $") | not)
+              and ($l | test("^ *(`+|~+)\\s*$")) then .fence = null else . end
+        elif $f != null then .out += [$l] | .fence = $f | .open = false | .blank = false
+        elif ($l | test("^\\s*$")) then .out += [""] | .open = false | .blank = true
+        else
+          (if ($l | test("^ ?\\S")) and .blank then .list = null else . end)
+          | .blank = false
+          | (($l | capture("^(?<m>\\s*([-*+]|[0-9]+[.)])\\s+)") | .m | length) // null) as $item
+          | if $item != null then
+              .out += [$l] | .list = $item | .open = ($l | test("  $") | not)
+            elif ($l | block) then .out += [$l] | .open = false
+            elif .open then
+              .out[(.out | length) - 1] += " " + ($l | sub("^\\s+"; ""))
+              | .open = ($l | test("  $") | not)
+            else .out += [$l] | .open = ($l | test("  $") | not)
+            end
         end)
     | .out | join("\n");
   [ .results[]? | select(.type == "unpatched_gem") ]

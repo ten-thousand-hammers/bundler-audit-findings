@@ -133,6 +133,18 @@ check "setext heading kept" "yes" "$(contains $'Workarounds\n-----------\nUpgrad
 check "shorter fence does not close a longer one" "yes" "$(contains $'```\nstill\nfenced\n````' "$BODY")"
 check "text after the fence still rejoins" "yes" "$(contains 'After the fence wraps here.' "$BODY")"
 
+echo "== fences nested in a list, and mixed fence characters =="
+setup
+DESC='- Apply the workaround:\n\n    ```sh\n  bundle config set example true\n  bundle install\n    ```\n\nThen restart\nthe app.\n\n```\nkeep\n```~\nthis\n```\n\n    ```\n    indented code, not a fence\nNext paragraph\nwraps.'
+jq -n --arg d "$(printf '%b' "$DESC")" '{results:[{type:"unpatched_gem",gem:{name:"x",version:"1"},advisory:{id:"A",criticality:"low",description:$d}}]}' > "$WORK/report.json"
+stub "$(cat "$WORK/report.json")" 1
+run
+BODY="$(jq -r .body "$FINDINGS_OUTPUT")"
+check "list-nested fence keeps commands apart" "yes" "$(contains $'  bundle config set example true\n  bundle install\n    ```' "$BODY")"
+check "prose after list-nested fence rejoins" "yes" "$(contains 'Then restart the app.' "$BODY")"
+check "mixed-character line does not close the fence" "yes" "$(contains $'```~\nthis\n```' "$BODY")"
+check "fence text in top-level indented code is ignored" "yes" "$(contains 'Next paragraph wraps.' "$BODY")"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
